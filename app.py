@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
+from datetime import datetime
 from flask_cors import CORS
 import mysql.connector
 import json
 import os
 
 app = Flask(__name__)
+
 CORS(
     app,
     resources={r"/*": {"origins": "*"}},
@@ -13,7 +15,6 @@ CORS(
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 )
 
-# ⭐ Render + Browser preflight fix
 @app.after_request
 def after_request(response):
     response.headers.add("Access-Control-Allow-Origin", "*")
@@ -21,8 +22,9 @@ def after_request(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
     return response
 
+
 # ================================
-# DB CONNECTION (AUTO RECONNECT)
+# DB CONNECTION
 # ================================
 def get_db():
     return mysql.connector.connect(
@@ -35,14 +37,56 @@ def get_db():
     )
 
 # ================================
+# GENERATE INVOICE NUMBER (NEW)
+# ================================
+def generate_invoice_number(doc_type):
+    db = get_db()
+    cursor = db.cursor()
+
+    # get current counter
+    cursor.execute(
+        "SELECT counter FROM invoice_counters WHERE document_type=%s",
+        (doc_type,)
+    )
+    row = cursor.fetchone()
+    counter = row[0] + 1
+
+    # update counter
+    cursor.execute(
+        "UPDATE invoice_counters SET counter=%s WHERE document_type=%s",
+        (counter, doc_type)
+    )
+    db.commit()
+
+    # prefix decide
+    prefix = "INV"
+    if doc_type == "PROFORMA INVOICE":
+        prefix = "PINV"
+    elif doc_type == "QUOTATION":
+        prefix = "QI"
+
+    now = datetime.now()
+    month = now.strftime("%m")
+    year = now.strftime("%y")
+
+    invoice_no = f"{prefix}-MQ{month}{year}{str(counter).zfill(4)}"
+
+    cursor.close()
+    db.close()
+
+    return invoice_no
+
+
+# ================================
 # HOME TEST
 # ================================
 @app.route("/")
 def home():
     return "Invoice API Running 🚀"
 
+
 # ================================
-# SAVE INVOICE
+# SAVE INVOICE  ⭐ UPDATED
 # ================================
 @app.route("/save-invoice", methods=["POST"])
 def save_invoice():
@@ -51,7 +95,10 @@ def save_invoice():
         cursor = db.cursor()
 
         data = request.json
-        print("📩 RECEIVED:", data["invoiceNumber"])
+
+        # ⭐ SERVER GENERATES NUMBER HERE
+        invoice_no = generate_invoice_number(data["documentType"])
+        data["invoiceNumber"] = invoice_no
 
         sql = """
         INSERT INTO invoices 
@@ -61,25 +108,31 @@ def save_invoice():
 
         values = (
             data["documentType"],
-            data["invoiceNumber"],     # already generated invoice no
+            invoice_no,
             data["billTo"],
             data["billToEmail"],
             float(data["total"]),
-            json.dumps(data)           # full invoice JSON save
+            json.dumps(data)
         )
 
         cursor.execute(sql, values)
+        db.commit()
+
         cursor.close()
         db.close()
 
-        return jsonify({"status": "success"})
+        return jsonify({
+            "status": "success",
+            "invoiceNumber": invoice_no
+        })
 
     except Exception as e:
         print("❌ SAVE ERROR:", e)
         return jsonify({"status": "error", "message": str(e)})
 
+
 # ================================
-# GET ALL INVOICES (HISTORY)
+# GET ALL INVOICES
 # ================================
 @app.route("/invoices", methods=["GET"])
 def get_invoices():
@@ -98,15 +151,17 @@ def get_invoices():
             "billTo": row[3],
             "billToEmail": row[4],
             "total": row[5],
-            "created_at": str(row[7])   # ⭐ CORRECT COLUMN
+            "created_at": str(row[7])
         })
 
     cursor.close()
     db.close()
 
     return jsonify(invoices)
+
+
 # ================================
-# GET SINGLE INVOICE JSON (PDF RE-DOWNLOAD)
+# GET SINGLE INVOICE JSON
 # ================================
 @app.route("/get-invoice/<id>", methods=["GET"])
 def get_invoice(id):
@@ -129,8 +184,9 @@ def get_invoice(id):
         print("❌ GET SINGLE ERROR:", e)
         return jsonify({"error": str(e)})
 
+
 # ================================
-# DELETE INVOICE (optional)
+# DELETE INVOICE
 # ================================
 @app.route("/delete-invoice/<id>", methods=["DELETE"])
 def delete_invoice(id):
@@ -138,10 +194,13 @@ def delete_invoice(id):
     cursor = db.cursor()
 
     cursor.execute("DELETE FROM invoices WHERE id=%s", (id,))
+    db.commit()
+
     cursor.close()
     db.close()
 
     return jsonify({"message": "Deleted"})
+
 
 # ================================
 # RUN SERVER
