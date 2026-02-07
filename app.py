@@ -16,7 +16,7 @@ def get_db():
         password="MqInvoice@2026#",
         database="u886440074_invoice_db",
         port=3306,
-        autocommit=True
+        ssl_disabled=False
     )
 
 # ================================
