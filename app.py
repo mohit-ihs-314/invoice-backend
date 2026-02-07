@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import mysql.connector
 import json
+import os
 
 app = Flask(__name__)
 CORS(app)
@@ -11,12 +12,12 @@ CORS(app)
 # ================================
 def get_db():
     return mysql.connector.connect(
-        host="srv1946.hstgr.io",
-        user="u886440074_invoice_user",
-        password="MqInvoice@2026#",
-        database="u886440074_invoice_db",
+        host=os.environ.get("DB_HOST"),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASS"),
+        database=os.environ.get("DB_NAME"),
         port=3306,
-        ssl_disabled=False
+        connection_timeout=30
     )
 
 # ================================
